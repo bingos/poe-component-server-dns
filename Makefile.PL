@@ -1,0 +1,17 @@
+use strict;
+use inc::Module::Install;
+name 'POE-Component-Server-DNS';
+author 'Chris Williams <chris@bingosnet.co.uk>';
+license 'perl';
+perl_version '5.000';
+author_tests 'xt';
+version_from 'lib/POE/Component/Server/DNS.pm';
+abstract_from 'lib/POE/Component/Server/DNS.pm';
+requires 'warnings::compat' => 0 if $] < 5.006;
+requires 'Carp' => 0;
+requires 'Socket' => 0;
+requires 'POE' => 0.38;
+requires 'Net::DNS' => 0.58;
+requires 'POE::Component::Client::DNS' => 1.00;
+requires 'POE::Component::Generic' => 0.0910;
+WriteAll();
