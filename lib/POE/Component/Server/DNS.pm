@@ -2,7 +2,7 @@ package POE::Component::Server::DNS;
 
 use strict;
 use warnings;
-use POE qw(Component::Client::DNS Wheel::ReadWrite Component::Generic Wheel::SocketFactory);
+use POE qw(Component::Client::DNS Wheel::ReadWrite Component::Client::DNS::Recursive Wheel::SocketFactory);
 use Socket;
 use Net::DNS::RR;
 use IO::Socket::INET;
@@ -22,19 +22,13 @@ sub spawn {
   $self->{_handlers} = [ ];
 
   unless ( $self->{no_clients} ) {
-      $self->{recursive} = POE::Component::Generic->spawn(
-	    package => 'Net::DNS::Resolver::Recurse',
-            object_options => [ 'debug', 1 ],
-	    methods => [ qw(hints query_dorecursion) ],
-      );
-
       $self->{_localhost} = Net::DNS::RR->new('localhost. 0 A 127.0.0.1');
   }
 
   $self->{session_id} = POE::Session->create(
 	object_states => [ 
 		$self => { shutdown => '_shutdown', },
-		$self => [ qw(_start _dns_incoming _dns_err _dns_response _dns_recursive _hints add_handler del_handler _handled_req _sock_up _sock_err log_event) ],
+		$self => [ qw(_start _dns_incoming _dns_err _dns_response _dns_recursive add_handler del_handler _handled_req _sock_up _sock_err log_event) ],
 	],
 	heap => $self,
 	options => ( $options && ref $options eq 'HASH' ? $options : { } ),
@@ -60,7 +54,7 @@ sub _start {
       $self->{resolver_opts} = { } unless $self->{resolver_opts} and ref $self->{resolver_opts} eq 'HASH';
       delete $self->{resolver_opts}->{Alias};
       $self->{resolver} = POE::Component::Client::DNS->spawn( Alias => "resolver" . $self->session_id(), %{ $self->{resolver_opts} } );
-      $self->{recursive}->hints( { event => '_hints' } );
+#      $self->{recursive}->hints( { event => '_hints' } );
   }
 
   $self->{factory} = POE::Wheel::SocketFactory->new(
@@ -119,7 +113,7 @@ sub _shutdown {
   delete $self->{dnsrw};
   unless ( $self->{no_clients} ) {
       $self->{resolver}->shutdown();
-      $self->{recursive}->shutdown();
+      #$self->{recursive}->shutdown();
   }
   $kernel->refcount_decrement( $_->{session}, __PACKAGE__ ) for @{ $self->{_handlers} };
   $kernel->refcount_decrement( $_, __PACKAGE__ ) for keys %{ $self->{_sessions} };
@@ -280,7 +274,14 @@ sub _dns_incoming {
   
   } 
   else {
-    $self->{recursive}->query_dorecursion( { event => '_dns_recursive', data => [ $dnsq, $dnsq->answerfrom, $dnsq->header->id ], }, $q->qname, $q->qtype, $q->qclass );
+#    $self->{recursive}->query_dorecursion( { event => '_dns_recursive', data => [ $dnsq, $dnsq->answerfrom, $dnsq->header->id ], }, $q->qname, $q->qtype, $q->qclass );
+    POE::Component::Client::DNS::Recursive->resolve(
+	event   => '_dns_recursive',
+	context => [ $dnsq, $dnsq->answerfrom, $dnsq->header->id ],
+	host    => $q->qname,
+	type    => $q->qtype,
+	class   => $q->qclass,
+    );
   }
 
   undef;
@@ -317,14 +318,11 @@ sub _dns_err {
   undef;
 }
 
-sub _hints {
-  undef;
-}
-
 sub _dns_recursive {
-  my ($kernel,$self,$data,$response) = @_[KERNEL,OBJECT,ARG0..ARG1];
+  my ($kernel,$self,$data) = @_[KERNEL,OBJECT,ARG0];
   return if $data->{error};
-  my ($dnsq,$answerfrom,$id) = @{ $data->{data} };
+  my ($dnsq,$answerfrom,$id) = @{ $data->{context} };
+  my $response = $data->{response};
   if ( $response ) {
     $response->header->id( $id );
     $response->answerfrom( $answerfrom );
