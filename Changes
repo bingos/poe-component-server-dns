@@ -1,6 +1,9 @@
 POE::Component::Server::DNS
 ===========================
 
+0.20	Tue Apr  7 20:42:05 BST 2009
+	- Make auto_set_repository() only run at author-time
+
 0.18	Tue Apr  7 10:01:09 BST 2009
 	- auto set repository in META.yml
 	- Refactored out PoCo-Generic in favour of PoCo-Client-DNS-Recursive

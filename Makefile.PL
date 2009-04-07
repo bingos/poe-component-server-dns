@@ -13,5 +13,5 @@ requires 'POE' => 1.004;
 requires 'Net::DNS' => 0.58;
 requires 'POE::Component::Client::DNS' => 1.00;
 requires 'POE::Component::Client::DNS::Recursive' => 0.02;
-auto_set_repository;
+eval "auto_set_repository()";
 WriteAll();

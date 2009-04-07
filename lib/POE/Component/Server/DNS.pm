@@ -8,7 +8,7 @@ use Net::DNS::RR;
 use IO::Socket::INET;
 use vars qw($VERSION);
 
-$VERSION = '0.18';
+$VERSION = '0.20';
 
 sub spawn {
   my $package = shift;
