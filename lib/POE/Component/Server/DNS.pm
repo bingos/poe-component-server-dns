@@ -1,14 +1,13 @@
 package POE::Component::Server::DNS;
 
+#ABSTRACT: A non-blocking, concurrent DNS server POE component
+
 use strict;
 use warnings;
 use POE qw(Component::Client::DNS Wheel::ReadWrite Component::Client::DNS::Recursive Wheel::SocketFactory);
 use Socket;
 use Net::DNS::RR;
 use IO::Socket::INET;
-use vars qw($VERSION);
-
-$VERSION = '0.20';
 
 sub spawn {
   my $package = shift;
@@ -457,11 +456,8 @@ sub put {
 }
 
 1;
-__END__
 
-=head1 NAME
-
-POE::Component::Server::DNS - A non-blocking, concurrent DNS server POE component
+=pod
 
 =head1 SYNOPSIS
 
@@ -640,20 +636,6 @@ Other suggestions as to the API were provided by Ben 'integral' Smith.
 
 Rocco Caputo brought L<POE::Component::Client::DNS> to the party.
 
-=head1 AUTHORS
-
-Chris 'BinGOs' Williams
-
-Jan-Pieter Cornet
-
-Brandon Black ( who supplied the "no_clients" code ).
-
-=head1 LICENSE
-
-Copyright C<(c)> Chris Williams, Jan-Pieter Cornet and Brandon Black
-
-This module may be used, modified, and distributed under the same terms as Perl itself. Please see the license that came with your Perl distribution for details.
-
 =head1 SEE ALSO
 
 L<POE::Component::Client::DNS>
@@ -663,3 +645,5 @@ L<POE::Component::Generic>
 L<Net::DNS>
 
 L<Net::DNS::Packet>
+
+=cut

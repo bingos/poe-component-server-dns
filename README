@@ -1,7 +1,0 @@
-POE::Component::Server::DNS
-===========================
-
-A POE based DNS server.
-
-Based on code from Jan-Pieter Cornet's yapc::eu 2006 talk
-<http://www.xs4all.nl/~johnpc/birmingham2006/>
