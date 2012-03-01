@@ -247,6 +247,7 @@ sub _dns_incoming {
     $dnsq->header->aa(0);
     $dnsq->header->ra(0);
     $dnsq->header->ad(0);
+    my $str = $dnsq->string(); # Doesn't work without this, fucked if I know why.
     $self->_dispatch_log( $dnsq );
     $self->{dnsrw}->put( $dnsq ) if $self->{dnsrw};
     return;
@@ -255,7 +256,7 @@ sub _dns_incoming {
   if ( $q->qname =~ /^localhost\.*$/i ) {
 	$dnsq->push( answer => $self->{_localhost} );
 	$self->_dispatch_log( $dnsq );
-  	$self->{dnsrw}->put( $dnsq ) if $self->{dnsrw};
+  $self->{dnsrw}->put( $dnsq ) if $self->{dnsrw};
 	return;
   }
 
