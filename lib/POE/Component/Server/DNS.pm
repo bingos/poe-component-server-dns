@@ -482,7 +482,7 @@ sub put {
     $kernel->post( 'dns_server', 'log_event', 'log' );
 
     # register a handler for any foobar.com suffixed domains
-    $kernel->post( 'dns_server', add_handler,
+    $kernel->post( 'dns_server', 'add_handler',
 	{
 	  event => 'handler',
 	  label => 'foobar',
