@@ -446,6 +446,7 @@ sub put {
     my @ret;
     for my $d ( @$data ) {
         my($inetstr, $port) = split /:/, $d->answerfrom();
+        $d->{buffer} = ''; #sigh
         if ( !defined $port ) {
             warn "answerfrom not set in DNS packet, no destination known\n";
         } else {
