@@ -86,7 +86,7 @@ sub got_response {
   my ($request, $response) = @_[ARG0, ARG1];
   ok($request->{context}, "got response $request->{context} for $request->{host}");
   if($request->{type} eq 'PTR') {
-    is($request->{error}, "REFUSED", "Refused an unhandled request");
+    is( $request->{response}->header->rcode(), "REFUSED", "Refused an unhandled request");
   }
   $poe_kernel->post( $server->session_id, 'shutdown' ) if $_[HEAP]->{requests}-- <= 1;
 }
