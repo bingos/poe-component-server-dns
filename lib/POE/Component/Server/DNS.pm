@@ -26,7 +26,7 @@ sub spawn {
 
   $self->{session_id} = POE::Session->create(
 	object_states => [
-		$self => { shutdown => '_shutdown', _sock_err_tcp => '_sock_err', _dns_incoming_tcp => '_dns_incoming' },
+		$self => { shutdown => '_shutdown', _sock_err_tcp => '_sock_err', },
 		$self => [ qw(_start _dns_incoming _dns_err _dns_response _dns_recursive add_handler del_handler _handled_req _sock_up _sock_err log_event _sock_up_tcp) ],
 	],
 	heap => $self,
@@ -66,6 +66,7 @@ sub _start {
 
   $self->{factory_tcp} = POE::Wheel::SocketFactory->new(
     SocketProtocol => 'tcp',
+    Reuse => 1,
     BindAddress => $self->{address} || INADDR_ANY,
     BindPort => ( defined $self->{port} ? $self->{port} : 53 ),
     SuccessEvent   => '_sock_up_tcp',
@@ -95,10 +96,11 @@ sub _sock_up_tcp {
 
   POE::Session->create(
 	object_states => [
-		$self => { _sock_err_tcp => '_sock_err', _start => 'socket_success', _stop => 'socket_death' },
-		$self => [ qw( socket_input socket_death _handled_req _dns_incoming _dns_recursive _dns_response) ],
+		$self => { _start => 'socket_success', _stop => 'socket_death' },
+		$self => [ qw( _sock_err socket_input socket_death _handled_req _dns_incoming _dns_recursive _dns_response) ],
 	],
     args => [$dns_socket],
+    heap => { _tcp_sockport => "$address:$port", },
   );
 
   undef;
@@ -131,6 +133,8 @@ sub socket_input {
 
 sub _sock_err {
   my ($operation, $errnum, $errstr, $wheel_id) = @_[ARG0..ARG3];
+  # ErrorEvent may also indicate EOF on a FileHandle by returning operation "read" error 0. For sockets, this means the remote end has closed the connection.
+  return undef if ($operation eq "read" and $errnum == 0);
   delete $_[OBJECT]->{factory};
   delete $_[OBJECT]->{"factory_tcp"};
   die "Wheel $wheel_id generated $operation error $errnum: $errstr\n";
@@ -273,6 +277,11 @@ sub del_handler {
 
 sub _dns_incoming {
   my($kernel,$self,$heap,$session,$dnsq) = @_[KERNEL,OBJECT,HEAP,SESSION,ARG0];
+
+  # TCP remote address is handled differently than UDP, so fix that here.
+  if (defined($heap->{_tcp_sockport})) {
+    $dnsq->answerfrom($heap->{_tcp_sockport});
+  }
 
   my($q) = $dnsq->question();
   return unless $q;
