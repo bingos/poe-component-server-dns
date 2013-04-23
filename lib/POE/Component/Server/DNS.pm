@@ -4,7 +4,7 @@ package POE::Component::Server::DNS;
 
 use strict;
 use warnings;
-use POE qw(Component::Client::DNS Wheel::ReadWrite Component::Client::DNS::Recursive Wheel::SocketFactory);
+use POE qw(Component::Client::DNS Wheel::ReadWrite Component::Client::DNS::Recursive Wheel::SocketFactory Filter::DNS::TCP);
 use Socket;
 use Net::DNS::RR;
 use IO::Socket::INET;
@@ -26,8 +26,8 @@ sub spawn {
 
   $self->{session_id} = POE::Session->create(
 	object_states => [
-		$self => { shutdown => '_shutdown', },
-		$self => [ qw(_start _dns_incoming _dns_err _dns_response _dns_recursive add_handler del_handler _handled_req _sock_up _sock_err log_event) ],
+		$self => { shutdown => '_shutdown', _sock_err_tcp => '_sock_err', },
+		$self => [ qw(_start _dns_incoming _dns_err _dns_response _dns_recursive add_handler del_handler _handled_req _sock_up _sock_err log_event _sock_up_tcp) ],
 	],
 	heap => $self,
 	options => ( $options && ref $options eq 'HASH' ? $options : { } ),
@@ -64,6 +64,15 @@ sub _start {
 	FailureEvent   => '_sock_err',
   );
 
+  $self->{factory_tcp} = POE::Wheel::SocketFactory->new(
+    SocketProtocol => 'tcp',
+    Reuse => 1,
+    BindAddress => $self->{address} || INADDR_ANY,
+    BindPort => ( defined $self->{port} ? $self->{port} : 53 ),
+    SuccessEvent   => '_sock_up_tcp',
+    FailureEvent   => '_sock_err_tcp',
+  );
+
   undef;
 }
 
@@ -81,9 +90,53 @@ sub _sock_up {
   undef;
 }
 
+sub _sock_up_tcp {
+  my ($kernel,$self,$dns_socket, $address, $port) = @_[KERNEL,OBJECT,ARG0, ARG1, ARG2];
+  $address = inet_ntoa($address);
+
+  POE::Session->create(
+	object_states => [
+		$self => { _start => 'socket_success', _stop => 'socket_death' },
+		$self => [ qw( _sock_err socket_input socket_death _handled_req _dns_incoming _dns_recursive _dns_response) ],
+	],
+    args => [$dns_socket],
+    heap => { _tcp_sockport => "$address:$port", },
+  );
+
+  undef;
+}
+
+
+sub socket_death {
+  my $heap = $_[HEAP];
+  if ($heap->{socket_wheel}) {
+    delete $heap->{socket_wheel};
+  }
+}
+
+sub socket_success {
+  my ($heap,$kernel,$connected_socket) = @_[HEAP, KERNEL, ARG0];
+
+  $heap->{socket_wheel} = POE::Wheel::ReadWrite->new(
+        Handle => $connected_socket,
+        Filter => POE::Filter::DNS::TCP->new(),
+        InputEvent => '_dns_incoming',
+        ErrorEvent => '_sock_err',
+  );
+}
+
+sub socket_input {
+  my ($heap, $buf) = @_[HEAP, ARG0];
+  warn Dumper $buf;
+  delete $heap->{socket_wheel};
+}
+
 sub _sock_err {
   my ($operation, $errnum, $errstr, $wheel_id) = @_[ARG0..ARG3];
+  # ErrorEvent may also indicate EOF on a FileHandle by returning operation "read" error 0. For sockets, this means the remote end has closed the connection.
+  return undef if ($operation eq "read" and $errnum == 0);
   delete $_[OBJECT]->{factory};
+  delete $_[OBJECT]->{"factory_tcp"};
   die "Wheel $wheel_id generated $operation error $errnum: $errstr\n";
   undef;
 }
@@ -110,6 +163,8 @@ sub _shutdown {
   $kernel->alarm_remove_all();
   $kernel->alias_remove( $_ ) for $kernel->alias_list( $_[SESSION] );
   delete $self->{dnsrw};
+  delete $self->{'factory'};
+  delete $self->{'factory_tcp'};
   unless ( $self->{no_clients} ) {
       $self->{resolver}->shutdown();
       #$self->{recursive}->shutdown();
@@ -221,7 +276,12 @@ sub del_handler {
 }
 
 sub _dns_incoming {
-  my($kernel,$self,$session,$dnsq) = @_[KERNEL,OBJECT,SESSION,ARG0];
+  my($kernel,$self,$heap,$session,$dnsq) = @_[KERNEL,OBJECT,HEAP,SESSION,ARG0];
+
+  # TCP remote address is handled differently than UDP, so fix that here.
+  if (defined($heap->{_tcp_sockport})) {
+    $dnsq->answerfrom($heap->{_tcp_sockport});
+  }
 
   my($q) = $dnsq->question();
   return unless $q;
@@ -236,7 +296,7 @@ sub _dns_incoming {
 			$q->qclass,
 			$q->qtype,
 			$callback,
-			$dnsq->answerfrom );
+			$dnsq->answerfrom, $dnsq, $handler->{'label'} );
 	return;
   }
 
@@ -249,14 +309,18 @@ sub _dns_incoming {
     $dnsq->header->ad(0);
     my $str = $dnsq->string(); # Doesn't work without this, fucked if I know why.
     $self->_dispatch_log( $dnsq );
-    $self->{dnsrw}->put( $dnsq ) if $self->{dnsrw};
+	#  $self->{dnsrw}->put( $dnsq ) if $self->{dnsrw};
+    $self->{"dnsrw"}->put( $dnsq ) if (!(defined($heap) && defined($heap->{socket_wheel})) && $self->{"dnsrw"});
+    $heap->{socket_wheel}->put($dnsq) if $heap->{socket_wheel};
+
     return;
   }
 
   if ( $q->qname =~ /^localhost\.*$/i ) {
 	$dnsq->push( answer => $self->{_localhost} );
 	$self->_dispatch_log( $dnsq );
-  $self->{dnsrw}->put( $dnsq ) if $self->{dnsrw};
+    $self->{"dnsrw"}->put( $dnsq ) if (!(defined($heap) && defined($heap->{socket_wheel})) && $self->{"dnsrw"});
+	$heap->{socket_wheel}->put($dnsq) if $heap->{socket_wheel};
 	return;
   }
 
@@ -288,7 +352,7 @@ sub _dns_incoming {
 }
 
 sub _handled_req {
-  my ($kernel,$self,$passthru,$passback) = @_[KERNEL,OBJECT,ARG0,ARG1];
+  my ($kernel,$self,$passthru,$passback,$heap) = @_[KERNEL,OBJECT,ARG0,ARG1,HEAP];
   my $reply = $passthru->[0];
   my ($rcode, $ans, $auth, $add, $headermask) = @{ $passback };
   $reply->header->rcode($rcode);
@@ -307,44 +371,58 @@ sub _handled_req {
 
   $reply->header->qr(1);
   $self->_dispatch_log( $reply );
-  $self->{dnsrw}->put( $reply ) if $self->{dnsrw};
+
+  $self->{"dnsrw"}->put( $reply ) if (!(defined($heap) && defined($heap->{socket_wheel})) && $self->{"dnsrw"});
+  $heap->{socket_wheel}->put($reply) if $heap->{socket_wheel};
   undef;
 }
 
 sub _dns_err {
   my($kernel,$self, $op, $errnum, $errstr) = @_[KERNEL,OBJECT, ARG0..ARG2];
   warn "DNS readwrite: $op generated error $errnum: $errstr\n";
-  $kernel->yield('shutdown');
+  if (!($op eq "read" and ($errnum == 0 ||  $errnum == 104)))
+  {
+	warn "SHUTDOWN";
+	$kernel->yield('shutdown');
+  }
   undef;
 }
 
 sub _dns_recursive {
-  my ($kernel,$self,$data) = @_[KERNEL,OBJECT,ARG0];
+  my ($kernel,$heap,$self,$data) = @_[KERNEL,HEAP,OBJECT,ARG0];
   return if $data->{error};
   my ($dnsq,$answerfrom,$id) = @{ $data->{context} };
+
+  my $socket = $heap->{socket_wheel};
+
   my $response = $data->{response};
   if ( $response ) {
     $response->header->id( $id );
     $response->answerfrom( $answerfrom );
     $self->_dispatch_log( $response );
-    $self->{dnsrw}->put( $response ) if $self->{dnsrw};
+    $self->{"dnsrw"}->put( $response ) if (!(defined($socket)) && $self->{"dnsrw"});
+    $socket->put($response) if $socket;
     return;
   }
   $dnsq->header->rcode('NXDOMAIN');
   $self->_dispatch_log( $dnsq );
-  $self->{dnsrw}->put( $dnsq ) if $self->{dnsrw};
+#  $self->{dnsrw}->put( $dnsq ) if $self->{dnsrw};
+  $self->{"dnsrw"}->put( $dnsq ) if (!(defined($socket)) && $self->{"dnsrw"});
+  $socket->put($dnsq) if $socket;
+
   undef;
 }
 
 sub _dns_response {
-  my ($kernel,$self,$reply) = @_[KERNEL,OBJECT,ARG0];
+  my ($kernel,$self,$heap,$reply) = @_[KERNEL,OBJECT,HEAP,ARG0];
 
   my ($answerfrom,$id) = @{ $reply->{context} };
   my $response = delete $reply->{response};
   $response->header->id( $id );
   $response->answerfrom( $answerfrom );
   $self->_dispatch_log( $response );
-  $self->{dnsrw}->put( $response ) if $self->{dnsrw};
+  $self->{"dnsrw"}->put( $response ) if (!(defined($heap) && defined($heap->{socket_wheel})) && $self->{"dnsrw"});
+  $heap->{socket_wheel}->put($response) if $heap->{socket_wheel};
   undef;
 }
 
