@@ -96,8 +96,8 @@ sub _sock_up_tcp {
 
   POE::Session->create(
 	object_states => [
-		$self => { _start => 'socket_success', _stop => 'socket_death' },
-		$self => [ qw( _sock_err socket_input socket_death _handled_req _dns_incoming _dns_recursive _dns_response) ],
+		$self => { _start => '_socket_success', _stop => '_socket_death' },
+		$self => [ qw( _sock_err _socket_input _socket_death _handled_req _dns_incoming _dns_recursive _dns_response) ],
 	],
     args => [$dns_socket],
     heap => { _tcp_sockport => "$address:$port", },
@@ -107,14 +107,14 @@ sub _sock_up_tcp {
 }
 
 
-sub socket_death {
+sub _socket_death {
   my $heap = $_[HEAP];
   if ($heap->{socket_wheel}) {
     delete $heap->{socket_wheel};
   }
 }
 
-sub socket_success {
+sub _socket_success {
   my ($heap,$kernel,$connected_socket) = @_[HEAP, KERNEL, ARG0];
 
   $heap->{socket_wheel} = POE::Wheel::ReadWrite->new(
@@ -125,7 +125,7 @@ sub socket_success {
   );
 }
 
-sub socket_input {
+sub _socket_input {
   my ($heap, $buf) = @_[HEAP, ARG0];
   warn Dumper $buf;
   delete $heap->{socket_wheel};
