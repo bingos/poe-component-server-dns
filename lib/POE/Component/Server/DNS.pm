@@ -304,6 +304,7 @@ sub _dns_incoming {
     # Refuse unhandled requests, like an authoritative-only
     #  BIND server would.
     $dnsq->header->rcode('REFUSED');
+    $dnsq->header->qr(1);
     $dnsq->header->aa(0);
     $dnsq->header->ra(0);
     $dnsq->header->ad(0);
